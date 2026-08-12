@@ -1,0 +1,119 @@
+# ============================================================
+# Datasets / raw signal captures
+# ============================================================
+*.csv
+*.npy
+*.npz
+*.mat
+*.h5
+*.hdf5
+*.tfrecord
+*.parquet
+*.feather
+*.iq
+*.dat
+*.bin
+*.sigmf-data
+*.sigmf-meta
+
+# Dataset / capture folders
+active_scan/
+passive_scan/
+files/
+data/
+datasets/
+dataset/
+raw/
+captures/
+logs/
+
+# ============================================================
+# Trained models / serialized objects
+# ============================================================
+*.pkl
+*.pickle
+*.joblib
+*.sav
+*.pt
+*.pth
+*.onnx
+*.keras
+*.ckpt
+models/
+checkpoints/
+
+# ============================================================
+# Image / plot outputs
+# ============================================================
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.svg
+*.eps
+*.pdf
+plots/
+figures/
+outputs/
+results/
+
+# ============================================================
+# Archives
+# ============================================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.7z
+*.rar
+
+# ============================================================
+# Native / compiled binaries
+# ============================================================
+*.dll
+*.so
+*.dylib
+*.exe
+*.pyd
+*.o
+*.obj
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+myenv/
+ENV/
+
+# ============================================================
+# Editors / OS
+# ============================================================
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ============================================================
+# Secrets / local config
+# ============================================================
+.env
+.env.*
+*.local
