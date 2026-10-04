@@ -28,7 +28,7 @@
 # =========================================
 
 import os
-os.chdir(r'D:\projectsml')
+os.chdir(r'E:\D\projectsml')
 
 import numpy as np
 import pandas as pd
@@ -43,6 +43,7 @@ from scipy.signal import welch, find_peaks, resample
 FS = 1_000_000              # synthetic-generator sample rate (Sweep/Pulsed/Spoofed)
 N_SAMPLES = 1024             # synthetic-generator window length
 CARRIER_FREQ = 204_800       # synthetic-generator carrier
+CAPTURE_FS = 2.048e6         # sample rate of a raw captured signal (e.g. mixed_rf_signal.csv)
 
 RADIOML_FS = 1_000_000       # load_radioml_dataset.py's assumed Fs for spectral math
 rng = np.random.default_rng()
@@ -277,6 +278,100 @@ def extract_features(signal, fs=FS, carrier_freq=CARRIER_FREQ):
     return [papr_db, variance, spectral_flatness, kurt, spectral_entropy,
             skewness, zcr, spectral_peak_count, duty_cycle,
             echo_autocorr_strength, order2_par, order4_par, phase_variance]
+
+
+# =====================================================================
+# PATHWAY C: raw captured signal -> CA-CFAR detection -> isolate the
+# detected region -> extract_features() with the CFAR-detected carrier.
+# (mirrors cacfar.py's detection logic, feeding straight into the same
+# extract_features() used by generate_multiclass_dataset.py, instead of
+# option C's fixed-carrier resample-only path.)
+# =====================================================================
+def run_cfar(mixed_signal, fs):
+    """CA-CFAR detection on a raw captured signal. Returns the detected
+    center frequency, bandwidth, and the isolated waveform (via IFFT of
+    the detected FFT bins) - identical logic to cacfar.py."""
+    N = len(mixed_signal)
+    num_avg = 8
+    seg_len = N // num_avg
+    fft_avg = np.zeros(seg_len // 2)
+    for i in range(num_avg):
+        seg = mixed_signal[i * seg_len:(i + 1) * seg_len]
+        fft_avg += np.abs(np.fft.fft(seg)[:seg_len // 2])
+    fft_avg /= num_avg
+    fft_db = 20 * np.log10(fft_avg + 1e-12)
+    frequencies = np.fft.fftfreq(seg_len, 1 / fs)[:seg_len // 2]
+    freq_res = fs / seg_len
+
+    num_train, num_guard, pfa = 64, 16, 1e-5
+    alpha = num_train * (pfa ** (-1 / num_train) - 1)
+    total_cells = num_train + num_guard
+    cfar_threshold = np.zeros(len(fft_db))
+    cfar_detections = np.zeros(len(fft_db), dtype=bool)
+    for i in range(total_cells, len(fft_db) - total_cells):
+        left = fft_db[i - total_cells:i - num_guard]
+        right = fft_db[i + num_guard + 1:i + total_cells + 1]
+        noise_est = np.mean(np.concatenate([left, right]))
+        cfar_threshold[i] = noise_est + alpha
+        if fft_db[i] > cfar_threshold[i]:
+            cfar_detections[i] = True
+
+    noise_floor = np.median(fft_db)
+    min_threshold = noise_floor + 25
+    cfar_detections &= (fft_db > min_threshold)
+
+    peak_bin = np.argmax(fft_db)
+    peak_power_db = fft_db[peak_bin]
+    threshold_bw = peak_power_db - 10
+    k_low, k_high = peak_bin, peak_bin
+    while k_low > 0 and fft_db[k_low] > threshold_bw:
+        k_low -= 1
+    while k_high < len(fft_db) - 1 and fft_db[k_high] > threshold_bw:
+        k_high += 1
+
+    center_freq_hz = frequencies[k_low + (k_high - k_low) // 2]
+    bandwidth_hz = (k_high - k_low) * freq_res
+
+    scale = N / seg_len
+    k_low_full = int(k_low * scale)
+    k_high_full = int(k_high * scale)
+    fft_full = np.fft.fft(mixed_signal)
+    fft_isolated = np.zeros(N, dtype=complex)
+    fft_isolated[k_low_full:k_high_full + 1] = fft_full[k_low_full:k_high_full + 1]
+    fft_isolated[N - k_high_full:N - k_low_full + 1] = fft_full[N - k_high_full:N - k_low_full + 1]
+    isolated_waveform = np.real(np.fft.ifft(fft_isolated))
+
+    return {
+        'center_freq_hz': center_freq_hz,
+        'bandwidth_hz': bandwidth_hz,
+        'peak_power_db': peak_power_db,
+        'noise_floor': noise_floor,
+        'isolated_waveform': isolated_waveform,
+    }
+
+
+def classify_raw_capture(csv_path, signal_col, fs=CAPTURE_FS):
+    """Full pipeline for a raw captured signal:
+    CA-CFAR detection -> isolate detected region -> resample to the
+    training window -> extract_features() (13-feature set, using the
+    CFAR-detected carrier) -> ready for classify_and_report()."""
+    df = pd.read_csv(csv_path)
+    mixed_signal = df[signal_col].values.astype(float)
+
+    cfar = run_cfar(mixed_signal, fs)
+    print(f"  [CFAR] Center Freq : {cfar['center_freq_hz']/1e3:.4f} kHz")
+    print(f"  [CFAR] Bandwidth   : {cfar['bandwidth_hz']:.2f} Hz")
+    print(f"  [CFAR] Peak Power  : {cfar['peak_power_db']:.2f} dB")
+    print(f"  [CFAR] Noise Floor : {cfar['noise_floor']:.2f} dB")
+
+    train_window_duration = N_SAMPLES / FS
+    window_samples = min(int(train_window_duration * fs), len(cfar['isolated_waveform']))
+    signal_window = cfar['isolated_waveform'][:window_samples]
+    signal_window_resampled = resample(signal_window, N_SAMPLES)
+
+    features = extract_features(signal_window_resampled, fs=FS,
+                                 carrier_freq=cfar['center_freq_hz'])
+    return features
 
 
 # ---------------------------------------------------------
@@ -554,7 +649,7 @@ def main():
         print("  Choose a signal to classify:")
         for key, (name, _, _) in GENERATORS.items():
             print(f"    {key}. {name}")
-        print("    C. Classify from a CSV file instead")
+        print("    C. Classify an external/captured signal (raw RF via CFAR, or real-world I/Q)")
         print("    Q. Quit")
         choice = input("\n  Enter choice: ").strip().upper()
 
@@ -563,16 +658,36 @@ def main():
             break
 
         elif choice == "C":
-            path = input("  Enter path to CSV file: ").strip()
-            col = input("  Column name containing the signal (e.g. 'signal', 'rssi'): ").strip()
-            try:
-                df = pd.read_csv(path)
-                raw_signal = df[col].values.astype(float)
-                signal = resample(raw_signal, N_SAMPLES)
-                classify_and_report(signal, "real", svm_model, rf_model, scaler,
-                                     label=f"CSV file: {path} (column: {col})")
-            except Exception as e:
-                print(f"  [ERROR] Could not classify file: {e}")
+            path = input("  Enter path to signal CSV: ").strip()
+            iq_choice = input("  Is this an I/Q capture (two columns: I and Q)? [y/N]: ").strip().upper()
+
+            if iq_choice == "Y":
+                i_col = input("  Column name for I (in-phase) [I]: ").strip() or "I"
+                q_col = input("  Column name for Q (quadrature) [Q]: ").strip() or "Q"
+                try:
+                    df = pd.read_csv(path)
+                    iq_signal = df[i_col].values.astype(float) + 1j * df[q_col].values.astype(float)
+                    # RadioML-style captures are short complex baseband windows (~128 samples).
+                    # Resample so the extractor's internal spectral math (Welch nperseg, etc.)
+                    # matches what it saw during training, regardless of the raw file's length.
+                    iq_window = resample(iq_signal, 128)
+                    features = extract_features_complex(iq_window)
+                    classify_and_report(None, "complex", svm_model, rf_model, scaler,
+                                         label=f"I/Q capture: {path} (I: {i_col}, Q: {q_col})",
+                                         precomputed_features=features)
+                except Exception as e:
+                    print(f"  [ERROR] Could not classify I/Q file: {e}")
+            else:
+                col = input("  Column name containing the raw waveform [Mixed_Signal]: ").strip() or "Mixed_Signal"
+                fs_input = input(f"  Sample rate in Hz [{CAPTURE_FS:.0f}]: ").strip()
+                fs = float(fs_input) if fs_input else CAPTURE_FS
+                try:
+                    features = classify_raw_capture(path, col, fs=fs)
+                    classify_and_report(None, "real", svm_model, rf_model, scaler,
+                                         label=f"CSV file: {path} (column: {col})",
+                                         precomputed_features=features)
+                except Exception as e:
+                    print(f"  [ERROR] Could not classify file: {e}")
 
         elif choice in GENERATORS:
             name, gen_fn, kind = GENERATORS[choice]
