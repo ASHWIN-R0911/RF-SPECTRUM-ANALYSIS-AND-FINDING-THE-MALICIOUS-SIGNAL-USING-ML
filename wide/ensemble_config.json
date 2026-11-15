@@ -1,0 +1,55 @@
+{
+  "feature_cols": [
+    "PAPR_dB",
+    "Variance",
+    "Spectral_Flatness",
+    "Kurtosis",
+    "Spectral_Entropy",
+    "Skewness",
+    "ZCR",
+    "Spectral_Peak_Count",
+    "Envelope_Duty_Cycle",
+    "Echo_Autocorr_Strength",
+    "Order2_PAR",
+    "Order4_PAR",
+    "Phase_Variance"
+  ],
+  "label_names": {
+    "0": "BPSK",
+    "1": "QPSK",
+    "2": "FM",
+    "3": "Tone-Jam",
+    "4": "Sweep-Jam",
+    "5": "Pulsed-Jam",
+    "6": "Spoofed-Replay",
+    "7": "Gaussian-Jam"
+  },
+  "class_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "malicious_labels": [
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "ensemble_rule": "mean of SVM and RF predict_proba, argmax over class_order",
+  "reject_threshold": 0.55,
+  "split_mode": "GROUP",
+  "snr_range": [
+    -9.99,
+    20.0
+  ],
+  "jsr_range": [
+    -5.0,
+    20.0
+  ]
+}
